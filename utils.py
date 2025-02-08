@@ -1,6 +1,8 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import astropy.io.fits as fits
+import math
+import pandas as pd
 
 def zeros(x, dtype=int):
     return [dtype(0.0) * int(x)]
@@ -52,3 +54,4 @@ def ascend_str(ls, idxs):
 
         idx += 1
     return None
+
