@@ -51,6 +51,7 @@
 #ExtComment,""
 #Source,
 [Data]
+Pixel Number,Measured Signal
 3.209201965e+02,1.308473409e-03
 3.210282593e+02,-6.494843983e-04
 3.211363220e+02,1.194417593e-03
