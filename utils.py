@@ -5,7 +5,7 @@ import math
 import pandas as pd
 
 def zeros(x, dtype=int):
-    return [dtype(0.0) * int(x)]
+    return [dtype(0.0)] * int(x)
 
 
 def my_sum(x):
@@ -54,4 +54,5 @@ def ascend_str(ls, idxs):
 
         idx += 1
     return None
+
 
