@@ -78,7 +78,7 @@ def get_centroids(wavelengths, intensities, threshold=None, threshold_lim=0.01, 
     :return: list of centroid wavelengths
     """
     if threshold is None:
-        threshold = 1.1 * ut.my_avg(intensities)
+        threshold = 1.1 * my_avg(intensities)
         if threshold < threshold_lim:
             threshold = threshold_lim
 
@@ -111,7 +111,7 @@ def get_centroids(wavelengths, intensities, threshold=None, threshold_lim=0.01, 
 
         regional_wavelengths = wavelengths[left:right + 1]
         regional_intensities = intensities[left:right + 1]
-        centroid = np.matmul(regional_wavelengths, regional_intensities) / ut.my_sum(regional_intensities)
+        centroid = np.matmul(regional_wavelengths, regional_intensities) / my_sum(regional_intensities)
         if centroid in centroids:
             peak_indices.remove(peak_idx)
         else:
@@ -122,3 +122,21 @@ def get_centroids(wavelengths, intensities, threshold=None, threshold_lim=0.01, 
     else:
         return np.array(centroids)
 
+
+def linear_least_squares(x, y):
+    """
+    Linear Least Square Fit
+
+    :param x: np.array
+    :param y: np.array
+    :return: m, c tuple representing (slope, intercept)
+    """
+    n = x.shape[0]
+    x_sum = my_sum(x)
+    A = np.array([[my_sum(x**2), x_sum], [x_sum, n]])
+    B = np.array([[np.matmul(x, y)], [my_sum(y)]])
+    A_inv = np.linalg.inv(A)
+    O = np.matmul(A_inv, B)
+    m = O[0, 0]
+    c = O[1, 0]
+    return m, c
