@@ -55,4 +55,70 @@ def ascend_str(ls, idxs):
         idx += 1
     return None
 
+# Evan Watson's Function
+def get_centroids(wavelengths, intensities, threshold=None, threshold_lim=0.01, scope=20, return_indices=False):
+    """
+    gets centroid wavelengths for all peaks in intensity above certain threshold
+    for a peak to count it has to be largest in scope radius
+    meaning largest out of [scope] number of points forward and back
+
+    Usage:
+        get_centroids(wavelengths, intensities, threshold=0.01, scope=20)
+        get_centroids(wavelengths, intensities, threshold_lim=0.005, scope=5)
+
+    :param wavelengths: array-like of wavelengths
+    :param intensities: array-like of intensities
+    :param threshold: float, threshold value, adjust in tandem with scope
+        if None, automatically determine threshold to be 1.1x mean value of intensities
+    :param threshold_lim: float, minimum threshold if automatically determining threshold, default 0.01
+    :param scope: int, scope radius, default 20,
+        larger scope ensures no false peaks within small bump regions
+        smaller scope allows for more peaks to be found (potentially false peaks too)
+    :param return_indices: bool, whether or not to return indices of all_centroids (pixel numbers)
+    :return: list of centroid wavelengths
+    """
+    if threshold is None:
+        threshold = 1.1 * ut.my_avg(intensities)
+        if threshold < threshold_lim:
+            threshold = threshold_lim
+
+    n = len(intensities)
+    peak_indices = []
+    for i, I in enumerate(intensities):
+        # dont count end points ("i-n" is negative version of index)
+        if i < scope or (i - n) >= -scope:
+            continue
+
+        if I > threshold:
+            # build like [i+scope, i+(scope-1), ..., i-(scope-1), i-scope]
+            vals = [intensities[i - j] for j in range(-scope, scope + 1) if j != 0]
+
+            # make sure intensity is peak of scope
+            if I > max(vals):
+                peak_indices.append(i)
+
+    centroids = []
+    for k, peak_idx in enumerate(peak_indices.copy()):
+        # go left until intensity drops below threshold
+        left = peak_idx
+        while left > 0 and intensities[left - 1] > threshold:
+            left -= 1
+
+        # repeat right
+        right = peak_idx
+        while right < n - 1 and intensities[right + 1] > threshold:
+            right += 1
+
+        regional_wavelengths = wavelengths[left:right + 1]
+        regional_intensities = intensities[left:right + 1]
+        centroid = np.matmul(regional_wavelengths, regional_intensities) / ut.my_sum(regional_intensities)
+        if centroid in centroids:
+            peak_indices.remove(peak_idx)
+        else:
+            centroids.append(centroid)
+
+    if return_indices:
+        return np.array(peak_indices), np.array(centroids)
+    else:
+        return np.array(centroids)
 
