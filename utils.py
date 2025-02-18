@@ -1,8 +1,5 @@
 import numpy as np
-import matplotlib.pyplot as plt
 import astropy.io.fits as fits
-import math
-import pandas as pd
 
 def zeros(x, dtype=int):
     return [dtype(0.0)] * int(x)
@@ -66,23 +63,25 @@ def my_bias(x):
 def bias_sub(x, bias, num_arrays=None):
     n = len(x)
     tot = zeros(n, dtype=float)
+
     if num_arrays == 1:
-        for data in x:
-            tot = data - bias
-            return tot
+        return x - bias
 
     for i, data in enumerate(x):
         tot[i] = data - bias
     return tot
 
-def normalize_flats(data, bias):
+def normalize_flats(data):
     n = len(data)
     tot = zeros(n, dtype=float)
 
-    for i, flats in enumerate(data):
-        tot[i] = (flats - bias)/(np.median(flats-bias))
+    for i, data in enumerate(data):
+        tot[i] = data/(np.median(data))
 
-    return tot
+    return my_avg(tot)
+
+def norm(data, norm_flat):
+    return data/norm_flat
 
 def histo(file):
 
@@ -144,7 +143,7 @@ def get_centroids(wavelengths, intensities, threshold=None, threshold_lim=0.01, 
     n = len(intensities)
     peak_indices = []
     for i, I in enumerate(intensities):
-        # dont count end points ("i-n" is negative version of index)
+        # don't count end points ("i-n" is negative version of index)
         if i < scope or (i - n) >= -scope:
             continue
 
