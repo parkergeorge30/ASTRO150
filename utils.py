@@ -25,6 +25,65 @@ def my_std(x):
 
     return (tot / len(x)) ** 0.5
 
+# [EVAN WATSON]
+def get_data(files):
+    """
+    grabs data from name of fits file
+
+    Usage:
+        files = ['data1.fits', 'data2.fits']
+        data_array = get_data(files)
+
+    :param files: str or list of strs, name of files to get data from
+    :return: array, data array
+    """
+    # checks to see if files is a list, if not, make it one
+    if type(files) is str:
+        files = [files]
+    n = len(files)
+
+    # if only 1 item in list, just return the data for that str
+    if n == 1:
+        return fits.getdata(files[0])
+
+    # otherwise initialize empty array and fill it with data
+    data = zeros(n, dtype=float)
+    for i, file in enumerate(files):
+        data[i] = fits.getdata(file)
+
+    return data
+
+def my_bias(x):
+    n = len(x)
+    tot = zeros(n, dtype=float)
+
+    for i, file in enumerate(x):
+        arr = fits.getdata(file)
+        tot[i] = arr
+    avg = my_avg(tot)
+    return avg
+
+def bias_sub(x, bias, num_arrays=None):
+    n = len(x)
+    tot = zeros(n, dtype=float)
+    if num_arrays == 1:
+        for data in x:
+            tot = data - bias
+            return tot
+
+    for i, data in enumerate(x):
+        tot[i] = data - bias
+    return tot
+
+def normalize_flats(data, bias):
+    n = len(data)
+    tot = zeros(n, dtype=float)
+
+    for i, flats in enumerate(data):
+        tot[i] = (flats - bias)/(np.median(flats-bias))
+
+    return tot
+
 def histo(file):
 
     farr = file.flatten()
