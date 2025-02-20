@@ -76,9 +76,9 @@ def normalize_flats(data):
     tot = zeros(n, dtype=float)
 
     for i, data in enumerate(data):
-        tot[i] = data/(np.median(data))
+        tot[i] = data/(np.median(data,axis=0))
 
-    return my_avg(tot)
+    return np.median(tot, axis=0)
 
 def norm(data, norm_flat):
     return data/norm_flat
