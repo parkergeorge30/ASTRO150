@@ -113,6 +113,24 @@ def ascend_str(ls, idxs):
         idx += 1
     return None
 
+# [EVAN WATSON]: Sets the negative values in a file array to zero for cleaner value control
+def set_negatives_to_zero_nd(tensor):
+    """
+    sets negative values to 0 inplace for a rank n tensor
+    """
+    # check for rank 1
+    ele = tensor[0]
+    if isinstance(ele, np.ndarray):
+        # not inside rank 1 yet so recursively loop with self call
+        for sub in tensor:
+            set_negatives_to_zero_nd(sub)
+    else:
+        # we are inside the rank 1 now
+        for i, val in enumerate(tensor):
+            if val < 0:                         # if less than zero
+                tensor[i] = 0                   # set to zero
+    return None
+
 # Evan Watson's Function
 def get_centroids(wavelengths, intensities, threshold=None, threshold_lim=0.01, scope=20, return_indices=False):
     """
