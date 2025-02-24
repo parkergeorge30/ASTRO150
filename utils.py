@@ -76,12 +76,12 @@ def normalize_flats(data):
     tot = zeros(n, dtype=float)
 
     for i, data in enumerate(data):
-        tot[i] = data/(np.median(data,axis=0))
+        tot[i] = data/(np.median(data))
 
     return np.median(tot, axis=0)
 
 def norm(data, norm_flat):
-    return data/norm_flat
+    return data/(norm_flat + 1e-2)
 
 def histo(file):
 
@@ -132,11 +132,13 @@ def set_negatives_to_zero_nd(tensor):
     return None
 
 # Evan Watson's Function
-def get_centroids(wavelengths, intensities, threshold=None, threshold_lim=0.01, scope=20, return_indices=False):
+def get_centroids(wavelengths, intensities, threshold=None, threshold_lim=0.01, scope=20, return_indices=True):
     """
     gets centroid wavelengths for all peaks in intensity above certain threshold
     for a peak to count it has to be largest in scope radius
     meaning largest out of [scope] number of points forward and back
+
+    also returns variance of centroids
 
     Usage:
         get_centroids(wavelengths, intensities, threshold=0.01, scope=20)
@@ -151,7 +153,7 @@ def get_centroids(wavelengths, intensities, threshold=None, threshold_lim=0.01, 
         larger scope ensures no false peaks within small bump regions
         smaller scope allows for more peaks to be found (potentially false peaks too)
     :param return_indices: bool, whether or not to return indices of all_centroids (pixel numbers)
-    :return: list of centroid wavelengths
+    :return: if return_indices, (peaks, centroids, error), otherwise (centroids, error)
     """
     if threshold is None:
         threshold = 1.1 * my_avg(intensities)
@@ -174,6 +176,7 @@ def get_centroids(wavelengths, intensities, threshold=None, threshold_lim=0.01, 
                 peak_indices.append(i)
 
     centroids = []
+    centroid_errors = []
     for k, peak_idx in enumerate(peak_indices.copy()):
         # go left until intensity drops below threshold
         left = peak_idx
@@ -187,16 +190,23 @@ def get_centroids(wavelengths, intensities, threshold=None, threshold_lim=0.01, 
 
         regional_wavelengths = wavelengths[left:right + 1]
         regional_intensities = intensities[left:right + 1]
+        # matmul acts as sum of element-wise product with 1d arrays
         centroid = np.matmul(regional_wavelengths, regional_intensities) / my_sum(regional_intensities)
+
+        # Prevent repeats and keep same length
         if centroid in centroids:
             peak_indices.remove(peak_idx)
         else:
             centroids.append(centroid)
+            # error prop for centroid, var = sigma^2
+            variance = np.matmul(regional_intensities,
+                                 (regional_wavelengths - centroid) ** 2) / my_sum(regional_intensities) ** 2
+            centroid_errors.append(variance)
 
     if return_indices:
-        return np.array(peak_indices), np.array(centroids)
+        return np.array(peak_indices), np.array(centroids), np.array(centroid_errors)
     else:
-        return np.array(centroids)
+        return np.array(centroids), np.array(centroid_errors)
 
 
 def linear_least_squares(x, y):
