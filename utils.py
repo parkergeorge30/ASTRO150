@@ -221,23 +221,34 @@ def get_centroids(wavelengths, intensities, threshold=None, threshold_lim=0.01, 
         return np.array(centroids), np.array(centroid_errors)
 
 # [EVAN WATSON]
-def linear_least_squares(x, y):
+def linear_least_squares(x, y, weights=None):
     """
     Linear Least Square Fit
 
     :param x: np.array
     :param y: np.array
+    :param weights: np.array, optional error associated with x
     :return: m, c tuple representing (slope, intercept)
     """
-    n = x.shape[0]
-    x_sum = my_sum(x)
-    A = np.array([[my_sum(x**2), x_sum], [x_sum, n]])
-    B = np.array([[np.matmul(x, y)], [my_sum(y)]])
-    A_inv = np.linalg.inv(A)
-    O = np.matmul(A_inv, B)
-    m = O[0, 0]
-    c = O[1, 0]
-    return m, c
+    # ensure numpy
+    x = np.asarray(x, dtype=np.float64)
+    y = np.asarray(y, dtype=np.float64)
+
+    # set weights if provided
+    w = 1. / (np.asarray(weights, dtype=np.float64) ** 2) if weights is not None else np.ones_like(x)
+
+    # construct design matrix B: each row is [x_i, 1]
+    B = np.column_stack((x, np.ones_like(x)))
+
+    # compute weighted normal matrix
+    W = np.diag(w)
+    BTW = B.T @ W
+    Cov = np.linalg.inv(BTW @ B)  # 2x2 covariance matrix
+
+    # finalize
+    params = Cov @ (B.T @ (w * y))
+    m, c = params[0], params[1]
+    return m, c, Cov
 
 #############
 ### LAB 3 ###
@@ -360,7 +371,7 @@ def load_reduced_science_frame(filename, flat, bias):
     return norm
 
 # [EVAN WATSON]
-def plot_im(ax, data, xlabel='x (px)', ylabel='y (px)', title='', **imshow_kwargs):
+def plot_im(ax, data, xlabel='x [pixel]', ylabel='y [pixel]', title='', **imshow_kwargs):
     """
     Plot an image using matplotlib imshow.
 
@@ -387,38 +398,66 @@ def plot_im(ax, data, xlabel='x (px)', ylabel='y (px)', title='', **imshow_kwarg
     cax = divider.append_axes("right", size=cax_kwargs['size'], pad=cax_kwargs['pad'])
     fig.colorbar(ax.images[0], cax=cax)
 
-def find_star_centroids(data, threshold=0.025):
+def find_star_locs(im_data, n_size=10, bright_count_thresh=10, background_factor=2):
     """
-    Reads a 2D FITS file, detects stars above a threshold, and calculates centroids.
-
-    Parameters:
-        data (arr): Path to the FITS file.
-        threshold (float): Intensity threshold for star detection.
-
-    Returns:
-        list of tuples: [(x1, y1), (x2, y2), ...] where (x, y) are centroid coordinates.
-        list of Intensities: [I1, I2, ...].
+    ARGUMENTS:
+    ================================================================
+    im_data - Reduced 2D FITS Data
+    n_size  - Neighborhood size to consider for windowing (pixels)
+    bright_count_thresh - Threshold for number of 'bright'pixels in
+                          neighborhood to be considered a star.
+                          (Proportional to size of Star blob)
+    background_factor - factor to multiply background by to set
+                        definition of bright pixel
+    RETURNS:
+    ================================================================
+    [[x_positions_of_star_center, y_positions_of_star_center]]
+    i.e., a list of x and y coordinate of star centers
     """
-    # Identify bright regions (potential stars)
-    mask = data > threshold
-    labeled, num_features = label(mask)
 
-    coords = []
-    bright_count = []
-    for i in range(1, num_features + 1):
-        indices = np.argwhere(labeled == i)
+    # set definition of a 'bright' pixel to be 3 times the background
+    background = np.median(im_data)
+    count_threshold = background_factor * background
 
-        # Compute intensity-weighted centroid
-        intensities = data[labeled == i]
-        total_intensity = np.sum(intensities)
-        x = np.sum(indices[:, 1] * intensities) / total_intensity
-        y = np.sum(indices[:, 0] * intensities) / total_intensity
-        if x > 995 or x < 50: # Make sure we are not in the bright corner or in the dead zone to the left of the rotated frame
-            continue
+    star_centers = []
 
-        coords.append((y, x))
-        bright_count.append(total_intensity)
-    return coords, bright_count
+    # indexing uses x=rows, y=cols
+    # but for analysis we want x=cols and y=rows, so we must swap when referencing
+    ny, nx = im_data.shape
+
+    for y in range(0, ny, n_size):
+        for x in range(0, nx, n_size):
+            # check to see if we're in either left corner (bad corners), if so, skip
+            if (y > 979 or y < 50) and x < 50:
+                continue
+
+            # set window
+            window = im_data[y:y + n_size, x:x + n_size]
+
+            count_bright = np.sum(window > count_threshold)
+            if count_bright >= bright_count_thresh:
+                center_y = y + window.shape[0] // 2
+                center_x = x + window.shape[1] // 2
+
+                star_centers.append([center_y, center_x])
+
+    return star_centers
+
+# [EVAN WATSON]
+def make_pos_array(image):
+    """
+    makes image position array with same shape as image
+
+    :param image: 2D array, science frame
+    :return: position array, same shape as image
+    """
+    row_dim = np.shape(image)[0]
+    row_pos = np.array(range(row_dim))[np.newaxis]
+    pos_xarr = np.tile(row_pos.T, (1, row_dim))
+    pos_yarr = np.tile(row_pos, (row_dim, 1))
+    pos_arr = np.dstack((pos_xarr, pos_yarr))
+
+    return pos_arr
 
 # [EVAN WATSON]
 def collapse_subsets(arr_list):
@@ -450,22 +489,179 @@ def collapse_subsets(arr_list):
     return filtered
 
 # [EVAN WATSON]
-def sky_query(dataframe, filename, fov_width='6.3m', fov_height='6.3m', plate_scale=0.368, magnitude_limit=18):
+def calc_centroids_2d(intarr, posarr, loc_list, window_max=20):
+    """
+    given intensities, positions, locations, and a window size, calculate the
+    centroid position value for each window at the specified location
+
+    PARAMETERS:
+    ==================================================================================
+    intarr - array of intensities (image), shape [y, x]
+    posarr - array of positions, shape [y, x, 2]
+    loc_list - list of [y, x] (NOT [x, y]!) coords to calculate centroids around
+    window_max - Size of Window to consider to find max pos of each star (in pixels)
+
+    RETURNS:
+    ==================================================================================
+    centroids - List of centroid coordinates and corresponding uncertainities
+                Format: [[xc, yc, unc_xc, unc_yc]]
+    """
+
+    centroids = []
+
+    window_size = window_max // 2
+
+    for i, (y, x) in enumerate(loc_list):
+        # check edges
+        if x < window_size or y < window_size or y > np.shape(intarr)[0] - window_size or x > np.shape(intarr)[1] - window_size:
+            # centroids.append([float('NaN')]*4)
+            continue
+
+        # window off region
+        y_slice = slice(y - window_size, y + window_size)
+        x_slice = slice(x - window_size, x + window_size)
+        region_ints = intarr[y_slice, x_slice]
+        region_pos = posarr[y_slice, x_slice, :]
+
+        # denominator
+        tot_int = np.sum(region_ints)
+
+        # matrix version of equation above
+        centroid = np.einsum('ijk,ij->k', region_pos, region_ints) / tot_int
+
+        # error prop
+        diff = region_pos - centroid
+
+        # matrix version of eq above (diff transposed is represented by the different indices in einsum)
+        cov = np.einsum('ij,ijk,ijl->kl', region_ints, diff, diff) / tot_int ** 2
+        sig_y, sig_x = cov[0, 0] ** .5, cov[1, 1] ** .5
+
+        # round pixels to whole numbers
+        centroid_full = [round(centroid[0]), round(centroid[1]), sig_y, sig_x]
+
+        centroids.append(centroid_full)
+
+    centroids = np.array(centroids, dtype='object')
+
+    # remove marks for same cluster
+    # set threshold window to half window_max in pixels
+    threshold = window_max // 2
+    all_neighbor_indices = []
+    for i, (y, x, sy, sx) in enumerate(centroids):
+        # check threshold and make mask for those that cross it
+        diff = np.abs(centroids - centroids[i])
+        mask = (diff[:, 0] <= threshold) & (diff[:, 1] <= threshold)
+        neighbor_indices = np.where(mask)[0]
+
+        # only store clusters, not single star locs
+        if len(neighbor_indices) > 1:
+            all_neighbor_indices.append(list(neighbor_indices))
+
+    # remove subsets to only get the main clusters
+    clusters = collapse_subsets(all_neighbor_indices)
+    keep = [True] * len(centroids)
+    for cluster in clusters:
+        # collapse along vertical dimension to average all values
+        collapsed_cluster = np.mean(centroids[cluster], axis=0)
+
+        # set y, x to be integers as they are pixel nums
+        collapsed_cluster[0:2] = round(collapsed_cluster[0]), round(collapsed_cluster[1])
+
+        # overwrite first occurence of cluster with the averaged version of its neighbors
+        centroids[cluster[0]] = collapsed_cluster
+
+        # mark neighbors for removal (everything after first occurence of cluster)
+        for idx in cluster[1:]:
+            keep[idx] = False
+
+    centroids = centroids[keep]
+
+    return centroids
+
+# [EVAN WATSON]
+def local_pixel_size(ra_deg, dec_deg, center_coord, focal_length=16480, pixel_size=0.030, offset=512, standard=False):
+    """
+    Converts RA and DEC from degrees to x pixel and y pixel using plate constants
+
+    Params:
+    ra_deg: Right Ascension of the object in degrees
+    dec_deg: Declination of the object in degrees
+    center_coord: AstroPy SkyCoord object, coordinate of center of image
+    standard: bool, if True, returns standard coordinates only, no local conversion
+    focal_length: focal length in mm
+    pixel_size: pixel size in mm
+    offset: pixel offset in pixels
+
+    Returns: the x pixel and y pixel locations of the object
+    """
+    # convert all values from deg to radians
+    ra = ra_deg * np.pi / 180
+    dec = dec_deg * np.pi / 180
+    ra_0 = center_coord.ra.value * np.pi / 180
+    dec_0 = center_coord.dec.value * np.pi / 180
+
+    # calculate common denominator beforehand
+    denom = (np.cos(dec_0)*np.cos(dec)*np.cos(ra-ra_0) + np.sin(dec) * np.sin(dec_0))
+
+    # standard coordinates from ra and dec
+    X = - np.cos(dec) * np.sin(ra-ra_0)/denom
+    Y = - (np.sin(dec_0)*np.cos(dec)*np.cos(ra-ra_0) - np.cos(dec_0)*np.sin(dec))/denom
+
+    if standard:
+        return X, Y
+
+    # convert to pixels using plate constants and center using offset
+    x = focal_length*X/pixel_size + offset
+    y = focal_length*Y/pixel_size + offset
+
+    return x, y
+
+# [EVAN WATSON]
+def local_plate_scale(ra_deg, dec_deg, center_coord, plate_scale=0.368, offset=512):
+    """
+    Converts RA and DEC from degrees to x pixel and y pixel using plate scale
+
+    Params:
+    ra_deg: Right Ascension of the object in degrees
+    dec_deg: Declination of the object in degrees
+    center_coord: AstroPy SkyCoord object, coordinate of center of image
+    plate_scale: plate scale in as/px
+    offset: pixel offset in pixels
+
+    Returns: the x pixel and y pixel locations of the object
+    """
+    # get relative to center coord and change from deg to arcsec
+    ra = (ra_deg - center_coord.ra.value) * 3600
+    dec = (dec_deg - center_coord.dec.value) * 3600
+
+    # convert from as to px using plate scale
+    x = ra / plate_scale
+    y = dec / plate_scale
+
+    # centering by offset
+    x += offset
+    y += offset
+
+    return x, y
+
+# [EVAN WATSON]
+def sky_query(dataframe, filename, fov_width='6.3m', fov_height='6.3m', magnitude_limit=18):
     """
     vizier query the sky for objects around center of a file
 
     :param dataframe: pandas.DataFrame, dataframe containing the data of file, must have columns
-                            ['FILE NAME'] ['RA'] ['DEC'] ['DATE-BEG']
+                            ['FILE NAME'] ['RA'] ['DEC'] ['DATE-BEG'] ['RADECSYS']
     :param filename: str, name of file in dataframe
     :param fov_width: str, width of field of view in arcs, '6.3m' is 6.3 arcmin
     :param fov_height: str, height of field of view in arcs, '6.3m' is 6.3 arcmin
-    :param plate_scale: float, CCD plate scale in arcseconds per pixel
     :param magnitude_limit: float, R2 magnitude limit
     :return: ra, dec arrays of queried objects
     """
+    # grab necessary values from provided dataframe
     ra_center, dec_center, yr = dataframe.loc[dataframe['FILE NAME'] == filename, ['RA', 'DEC', 'DATE-BEG']].values[0]
+    reference_frame = dataframe.loc[dataframe['FILE NAME'] == filename, 'RADECSYS'].values[0].lower()
 
-    center_coord = SkyCoord(ra=ra_center, dec=dec_center, unit=(u.hour, u.deg), frame='fk5')
+    center_coord = SkyCoord(ra=ra_center, dec=dec_center, unit=(u.hour, u.deg), frame=reference_frame)
 
     vizier = Vizier(column_filters={"R2mag": f"<{magnitude_limit}"})
     result_table = vizier.query_region(center_coord, width=fov_width, height=fov_height, catalog="USNO-B1")
@@ -488,16 +684,60 @@ def sky_query(dataframe, filename, fov_width='6.3m', fov_height='6.3m', plate_sc
     ra_cat = ra_cat + pm_ra * dt
     dec_cat = dec_cat + pm_dec * dt
 
-    # get relative to center coord and change to arcsec
-    ra_cat = (ra_cat - center_coord.ra.value) * 3600
-    dec_cat = (dec_cat - center_coord.dec.value) * 3600
+    return ra_cat, dec_cat, center_coord
 
-    # convert from as to px using plate scale
-    ra_cat /= plate_scale
-    dec_cat /= plate_scale
+# [EVAN WATSON]
+def nearest_neighbor_match(a, b):
+    """
+    Matches entries by Euclidean distance
 
-    # centering (image is 1024x1024)
-    ra_cat += 512
-    dec_cat += 512
+    Parameters:
+        a : ndarray of shape (N,2)
+            Array containing x and y positions [x, y].
+        b : ndarray of shape (M,2)
+            Array containing x and y positions [x, y].
 
-    return ra_cat, dec_cat
+    Returns:
+        matches : list of tuples
+            Each tuple is (a_index, b_index) indicating a match.
+    """
+    # Ensure inputs are numpy arrays
+    a = np.array(a).astype(np.float64)
+    b = np.array(b).astype(np.float64)
+
+    N = a.shape[0]
+    matches = []
+    used_centroids = set()
+
+    for i in range(N):
+        a_i = a[i]  # This should be a (2,) array
+
+        # Euclidean distance:
+        diff = b - a_i  # Shape (M,2)
+        distances = np.sqrt(np.sum(diff**2, axis=1))  # Shape (M,)
+
+        sorted_indices = np.argsort(distances)
+        for j in sorted_indices:
+            if j not in used_centroids:
+                matches.append((i, j))
+                used_centroids.add(j)
+                break
+
+    return matches
+
+# [EVAN WATSON]
+def get_1_sigma_region(x, cov):
+    """
+    Gets 1 sigma region from covariance matrix
+
+    :param x: np.ndarray, independent variable
+    :param cov: np.ndarray, covariance matrix
+    :return: np.ndarray, 1-sigma region
+    """
+    # ensure numpy
+
+    sigma_m = cov[0, 0] ** .5
+    sigma_c = cov[1, 1] ** .5
+    cov_mc = cov[0, 1]
+    sigma_y = (x ** 2 * sigma_m ** 2 + sigma_c ** 2 + 2 * x * cov_mc) ** .5
+    return sigma_y
